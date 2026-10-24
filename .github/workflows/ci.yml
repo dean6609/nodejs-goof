@@ -1,0 +1,38 @@
+name: ci
+# The check the patcher's merge gate requires by name: "ci / smoke".
+# It proves the app still installs and starts after a dependency change.
+on:
+  push:
+    branches: [main]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    services:
+      mongo:
+        image: mongo:3.6
+        ports: ["27017:27017"]
+      mysql:
+        image: mysql:5.7
+        env: {MYSQL_ROOT_PASSWORD: root, MYSQL_DATABASE: acme}
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd="mysqladmin ping -proot" --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: {node-version: 18.13.0}
+      # No install scripts: a malicious dependency cannot run code in CI (the LiteLLM lesson).
+      - run: npm ci --ignore-scripts
+      - name: start the app and wait for HTTP 200
+        run: |
+          npm start > app.log 2>&1 &
+          for i in $(seq 1 45); do
+            code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:3001/ || true)
+            if [ "$code" = "200" ]; then echo "app answered 200 after $((i*2)) s"; exit 0; fi
+            sleep 2
+          done
+          echo "app did not answer 200 in 90 s"; tail -50 app.log; exit 1
